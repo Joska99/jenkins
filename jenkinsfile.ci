@@ -1,0 +1,81 @@
+pipeline {
+    agent { label("${ENV}" == 'prd' ? 'prd-agent' : 'dev-agent') }
+
+    parameters {
+        string(name: 'PROJECT_NAME', defaultValue: 'kubernetes', description: 'Project name')
+        choice(name: 'REPO_NAME', defaultValue: 'script bring list of repos from project', description: 'App to build')
+        choice(name: 'ENV', choices: ['dev', 'qa', 'stg', 'prd'], description: 'Chose')
+        text(name: 'BIOGRAPHY', defaultValue: '', description: 'Enter some information about the person')
+        booleanParam(name: 'TOGGLE', defaultValue: true, description: 'Toggle this value')
+        password(name: 'PASSWORD', defaultValue: 'SECRET', description: 'Enter a password')
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        skipDefaultCheckout()
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    environment {
+        DOCKER_IMAGE = 'my-app'  // Change "my-app" to your app's name
+        DOCKER_REGISTRY = 'my-docker-registry'      // Change to your Docker registry (e.g., Docker Hub, AWS ECR, etc.)
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo 'Checking out source code...'
+                checkout scm
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                script {
+                    docker.build(env.DOCKER_IMAGE)
+                }
+            }
+        }
+
+        stage('Test Docker Image') {
+            steps {
+                echo 'Running tests on Docker image...'
+                script {
+                    docker.image(env.DOCKER_IMAGE).inside {
+                        sh 'echo "Run your test scripts here."'
+                    }
+                }
+            }
+        }
+
+        stage('Push Docker Image') {
+            when {
+                expression { return params.PUSH_TO_REGISTRY }
+            }
+            steps {
+                echo 'Pushing Docker image to registry...'
+                script {
+                    withDockerRegistry([url: "https://${env.DOCKER_REGISTRY}", credentialsId: 'docker-credentials-id']) {
+                        docker.image(env.DOCKER_IMAGE).push()
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Cleaning up...'
+            sh "docker rmi ${DOCKER_IMAGE} || true"
+        }
+        success {
+            echo 'Build succeeded!'
+        }
+        failure {
+            echo 'Build failed!'
+        }
+    }
+}
